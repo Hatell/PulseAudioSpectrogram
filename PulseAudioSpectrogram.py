@@ -25,9 +25,9 @@ import math
 import cairo
 from gi.repository import Gtk, GObject
 
-class SpectrogramWidget(Gtk.Misc):
+class SpectrogramWidget(Gtk.DrawingArea):
   def __init__(self):
-    Gtk.Misc.__init__(self)
+    Gtk.DrawingArea.__init__(self)
     self.surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1024, 512)
     self.running = False
     self.red_dB_offset = 0
