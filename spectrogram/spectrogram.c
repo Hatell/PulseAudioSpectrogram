@@ -149,6 +149,7 @@ static void context_state_cb(
 
 void pulse_stop()
 {
+  free(fft_buf);
   free(buf);
 
   pa_threaded_mainloop_stop(mainloop);
@@ -252,6 +253,11 @@ double *pulse_read()
   for (i = 0; i < n_samples; i++) {
     fft_buf[i] = sqrt(pow(cpx[i][0], 2) + pow(cpx[i][1], 2));
   }
+
+  fftw_destroy_plan(fft);
+  fftw_free(cpx);
+
+  free(signal);
 
   return fft_buf;
 }
