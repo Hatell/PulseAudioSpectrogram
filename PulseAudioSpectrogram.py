@@ -116,19 +116,27 @@ class PulseSpectrogram(Gtk.Window):
     self.button = Gtk.Button(label="Start")
     self.button.connect("clicked", self.on_button_clicked)
 
-    self.spin = Gtk.SpinButton()
-    self.spin.set_adjustment(Gtk.Adjustment(20, 0, 100, 1, 10, 0))
-    self.spin.connect("value-changed", self.on_spin_value_changed)
+    self.scaleMax = Gtk.HScale()
+    self.scaleMax.set_value_pos(1)#Gtk.GTK_POS_LEFT)
+    self.scaleMax.set_digits(0)
+    self.scaleMax.set_size_request(200, 20)
+    self.scaleMax.set_adjustment(Gtk.Adjustment(20, 1, 100, 1, 10, 0))
+    self.scaleMax.set_increments(0.5, 5)
+    self.scaleMax.connect("value-changed", self.on_scaleMax_value_changed)
 
-    self.spinOffset = Gtk.SpinButton()
-    self.spinOffset.set_adjustment(Gtk.Adjustment(0, -80, 80, 1, 10, 0))
-    self.spinOffset.connect("value-changed", self.on_spinOffset_value_changed)
+    self.scaleOffset = Gtk.HScale()
+    self.scaleOffset.set_value_pos(1)#Gtk.GTK_POS_LEFT)
+    self.scaleOffset.set_digits(0)
+    self.scaleOffset.set_size_request(200, 20)
+    self.scaleOffset.set_adjustment(Gtk.Adjustment(0, -80, 80, 1, 10, 1))
+    self.scaleOffset.set_increments(0.5, 5)
+    self.scaleOffset.connect("value-changed", self.on_scaleOffset_value_changed)
 
     box = Gtk.Box(spacing=6)
     box.add(Gtk.Label("Offset dB"))
-    box.add(self.spinOffset)
+    box.add(self.scaleOffset)
     box.add(Gtk.Label("Max dB"))
-    box.add(self.spin)
+    box.add(self.scaleMax)
     box.add(self.button)
     #box.add(self.spec.bufLabel)
 
@@ -140,10 +148,10 @@ class PulseSpectrogram(Gtk.Window):
 
     pass # def __init__
 
-  def on_spinOffset_value_changed(self, widget):
+  def on_scaleOffset_value_changed(self, widget):
     self.spec.red_dB_offset = widget.get_value()
 
-  def on_spin_value_changed(self, widget):
+  def on_scaleMax_value_changed(self, widget):
     self.spec.red_dB_max = widget.get_value()
 
   def on_button_clicked(self, widget):
