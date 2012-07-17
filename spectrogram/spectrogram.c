@@ -29,11 +29,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/*
- */
 // 44100 * 20
 #define BUF_SIZE 882000
 
+// Sample buffers
 static int n_samples = 0;
 static double *fft_buf = 0;
 static int16_t *buf = 0;
@@ -41,7 +40,9 @@ static uint32_t buf_w_index = 0;
 static uint32_t buf_r_index = 0;
 static uint32_t buf_ready = 0;
 
-
+// For Pulseaudio
+static const char *source_name = 0;
+static const pa_source_info *source_info = 0;
 static pa_threaded_mainloop *mainloop = 0;
 static pa_mainloop_api *mainloop_api = 0;
 static pa_context *context = 0;
@@ -54,12 +55,12 @@ static pa_sample_spec sample_spec = {
   .channels = 2
 };
 
-static void quit(int ret, const char* source)
+static void quit(const char* source)
 {
-  fprintf(stderr, "%s: %s\n", source, pa_strerror(pa_context_errno(context)));
+  fprintf(stderr, "%s\n", source);
 
   if (mainloop_api) {
-    mainloop_api->quit(mainloop_api, ret);
+    mainloop_api->quit(mainloop_api, 0);
   }
 }
 
@@ -70,12 +71,39 @@ static void get_source_info_cb(
         void *userdata
 ) {
   if (is_last || info->monitor_of_sink == PA_INVALID_INDEX) {
+    source_info = 0;
+    pa_threaded_mainloop_signal(mainloop, 0);
     return;
   }
 
-  if (pa_stream_connect_record(stream, info->name, 0, 0)) {
-    quit(1, "pa_stream_connect_record");
+  source_info = info;
+
+  pa_threaded_mainloop_signal(mainloop, 1);
+}
+
+static void stream_state_cb(
+        pa_stream *s,
+        void *userdata
+) {
+  switch (pa_stream_get_state(s)) {
+    case PA_STREAM_READY:
+    case PA_STREAM_FAILED:
+    case PA_STREAM_TERMINATED:
+      pa_threaded_mainloop_signal(mainloop, 0);
+      break;
+
+    case PA_STREAM_UNCONNECTED:
+    case PA_STREAM_CREATING:
+      break;
   }
+}
+
+static void stream_success_cb(
+        pa_stream *s,
+        int success,
+        void *userdata
+) {
+  pa_threaded_mainloop_signal(mainloop, 0);
 }
 
 static void stream_read_cb(
@@ -89,7 +117,7 @@ static void stream_read_cb(
   size_t i = 0;
 
   if (pa_stream_peek(s, &data, &peeked)) {
-    quit(1, "pa_stream_peek");
+    quit("pa_stream_peek");
     return;
   }
 
@@ -119,31 +147,21 @@ static void context_state_cb(
     case PA_CONTEXT_SETTING_NAME:
       break;
     case PA_CONTEXT_READY:
-      stream = pa_stream_new(c, "PulseSpectrogram", &sample_spec, 0);
-
-      if (!stream) {
-        quit(1, "pa_stream_new");
-      }
-
-      pa_stream_set_read_callback(stream, stream_read_cb, 0);
-
-      pa_operation_unref(
-        pa_context_get_source_info_list(c, get_source_info_cb, 0)
-      );
-
+      pa_threaded_mainloop_signal(mainloop, 0);
       break;
 
     case PA_CONTEXT_TERMINATED:
-      quit(0, "context_state_cb TERMINATED");
+      quit("context_state_cb TERMINATED");
+      pa_threaded_mainloop_signal(mainloop, 0);
       break;
 
     case PA_CONTEXT_FAILED:
-      quit(1, "context_state_cb FAILED");
+      quit("context_state_cb FAILED");
+      pa_threaded_mainloop_signal(mainloop, 0);
       break;
 
     default:
-      
-      quit(1, "context_state_cb UNKNOWN");
+      quit("context_state_cb UNKNOWN");
   }
 }
 
@@ -157,7 +175,7 @@ void pulse_stop()
 
 int pulse_connect()
 {
-  // Setup buffers
+  // Setup sample buffers
   fft_buf = (double*) malloc(sizeof(double) * n_samples);
   buf = (int16_t*)malloc(sizeof(int16_t) * BUF_SIZE);
   buf_r_index = 0;
@@ -170,12 +188,14 @@ int pulse_connect()
   mainloop = pa_threaded_mainloop_new();
 
   if (!mainloop) {
+    quit("pa_threaded_mainloop_new");
     return -1;
   }
 
   mainloop_api = pa_threaded_mainloop_get_api(mainloop);
 
   if (pa_signal_init(mainloop_api)) {
+    quit("pa_signal_init");
     return -2;
   }
 
@@ -190,6 +210,7 @@ int pulse_connect()
   );
 
   if (!context) {
+    quit("pa_conext_new_with_proplist");
     return -3;
   }
 
@@ -201,24 +222,86 @@ int pulse_connect()
 
   pa_context_connect(context, 0, 0, 0);
 
+  pa_threaded_mainloop_lock(mainloop);
+
   pa_threaded_mainloop_start(mainloop);
+
+  // Wait for connection
+  pa_threaded_mainloop_wait(mainloop);
+
+  if (pa_context_get_state(context) != PA_CONTEXT_READY) {
+    quit("pa_context_get_state");
+    return -4;
+  }
+
+  stream = pa_stream_new(context, "PulseSpectrogram", &sample_spec, 0);
+
+  if (!stream) {
+    quit("pa_stream_new");
+    return -5;
+  }
+
+  pa_stream_set_state_callback(stream, stream_state_cb, 0);
+  pa_stream_set_read_callback(stream, stream_read_cb, 0);
+
+  pa_operation *o = 0;
+  o = pa_context_get_source_info_list(context, get_source_info_cb, 0);
+
+  while (pa_operation_get_state(o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait(mainloop);
+
+    if (source_info) {
+      if (!source_name) {
+        source_name = pa_xstrdup(source_info->name);
+      }
+
+      pa_threaded_mainloop_accept(mainloop);
+    }
+  }
+
+  pa_operation_unref(o);
+
+  if (pa_stream_connect_record(stream, source_name, 0, 0)) {
+    quit("pa_stream_connect_record");
+    return -6;
+  }
+
+  pa_threaded_mainloop_wait(mainloop);
+
+  if (pa_stream_get_state(stream) != PA_STREAM_READY) {
+    quit("pa_stream_get_state");
+    return -7;
+  }
+
+  pa_threaded_mainloop_unlock(mainloop);
 
   return 0;
 }
 
-void pulse_flush()
-{
-  pa_threaded_mainloop_lock(mainloop);
-
-  // leave 500ms to buffer
-  buf_r_index = (buf_w_index - 22050) % BUF_SIZE;
-  buf_ready = 22050;
-
-  pa_threaded_mainloop_unlock(mainloop);
-}
-
 double *pulse_read()
 {
+  pa_operation *o = 0;
+
+  pa_threaded_mainloop_lock(mainloop);
+
+  o = pa_stream_update_timing_info(stream, stream_success_cb, 0);
+
+  while (pa_operation_get_state(o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait(mainloop);
+  }
+
+  pa_operation_unref(o);
+
+  const pa_timing_info* t = pa_stream_get_timing_info(stream);
+
+  if (t) {
+    buf_ready = (uint32_t)((double)44.1 * (double)(t->sink_usec / 1000));
+    buf_r_index = buf_w_index - buf_ready;
+    buf_r_index %= BUF_SIZE;
+  }
+
+  pa_threaded_mainloop_unlock(mainloop);
+
   double *signal = 0;
   fftw_complex *cpx = 0;
   fftw_plan fft;
@@ -227,7 +310,8 @@ double *pulse_read()
 
   memset(fft_buf, 0, n_samples);
 
-  window_size = MIN(MAX(buf_ready / 40, n_samples * 2), 1200);
+  // 25ms
+  window_size = 1103; //MIN(MAX(buf_ready / 40, n_samples * 2), 1200);
 
   signal = (double*) malloc(sizeof(double) * window_size);
   cpx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * window_size);
@@ -266,21 +350,25 @@ int pulse_buf_ready()
 {
   return buf_ready;
 }
+
+const char * pulse_source_name()
+{
+  return source_name;
+}
+
 /*
  */
 
 static PyObject *SpectrogramError;
 
-static PyObject * spectrogram_flush(PyObject *self, PyObject *args)
-{
-  pulse_flush();
-
-  Py_RETURN_NONE;
-}
-
 static PyObject * spectrogram_buf_ready(PyObject *self, PyObject *args)
 {
   return Py_BuildValue("i", pulse_buf_ready());
+}
+
+static PyObject * spectrogram_source_name(PyObject *self, PyObject *args)
+{
+  return Py_BuildValue("s", pulse_source_name());
 }
 
 static PyObject * spectrogram_read(PyObject *self, PyObject *args)
@@ -319,10 +407,10 @@ static PyMethodDef SpectrogramMethods[ ] = {
    spectrogram_buf_ready,
    0,
    "Returns readed samples in buffer"},
-  {"flush",
-   spectrogram_flush,
+  {"source_name",
+   spectrogram_source_name,
    0,
-   "Flush readed samples"},
+   "Returns Pulseaudio source name."},
   {"read",
    spectrogram_read,
    0,

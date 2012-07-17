@@ -33,6 +33,7 @@ class SpectrogramWidget(Gtk.DrawingArea):
     self.red_dB_offset = 0
     self.red_dB_max = 18
     #self.bufLabel = Gtk.Label()
+    self.sourceLabel = Gtk.Label()
     self.press_x = -1
     self.press_y = -1
 
@@ -40,6 +41,8 @@ class SpectrogramWidget(Gtk.DrawingArea):
     self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 
     spectrogram.connect()
+
+    self.sourceLabel.set_label(spectrogram.source_name())
 
     self.set_size_request(1024 + 20, 512 + 20)
 
@@ -71,9 +74,6 @@ class SpectrogramWidget(Gtk.DrawingArea):
     my_cr.set_source_surface(self.surface, -1, 0)
     my_cr.rectangle(0, 0, 1024, 512)
     my_cr.fill()
-
-    if spectrogram.buf_ready() > 44100 * 2.5:
-      spectrogram.flush()
 
     self.draw_fft(my_cr, spectrogram.read())
 
@@ -211,7 +211,7 @@ class PulseSpectrogram(Gtk.Window):
     box.add(Gtk.Label("Max dB"))
     box.add(self.scaleMax)
     box.add(self.button)
-    #box.add(self.spec.bufLabel)
+    box.add(self.spec.sourceLabel)
 
     vbox = Gtk.VBox(spacing=6)
     vbox.pack_start(self.spec, True, True, 0)
