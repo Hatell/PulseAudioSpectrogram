@@ -49,6 +49,11 @@ static pa_context *context = 0;
 static pa_stream *stream = 0;
 static pa_proplist *proplist = 0;
 
+static pa_buffer_attr buffer_attr = {
+  .maxlength = (uint32_t) -1,
+  .fragsize = (uint32_t) 176400 * 2 // 50ms in bytes
+};
+
 static pa_sample_spec sample_spec = {
   .format = PA_SAMPLE_S16LE,
   .rate = 44100,
@@ -96,14 +101,6 @@ static void stream_state_cb(
     case PA_STREAM_CREATING:
       break;
   }
-}
-
-static void stream_success_cb(
-        pa_stream *s,
-        int success,
-        void *userdata
-) {
-  pa_threaded_mainloop_signal(mainloop, 0);
 }
 
 static void stream_read_cb(
@@ -261,7 +258,8 @@ int pulse_connect()
 
   pa_operation_unref(o);
 
-  if (pa_stream_connect_record(stream, source_name, 0, 0)) {
+  if (pa_stream_connect_record(stream, source_name, &buffer_attr,
+      PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_INTERPOLATE_TIMING)) {
     quit("pa_stream_connect_record");
     return -6;
   }
@@ -280,43 +278,27 @@ int pulse_connect()
 
 double *pulse_read()
 {
-  pa_operation *o = 0;
-
-  pa_threaded_mainloop_lock(mainloop);
-
-  o = pa_stream_update_timing_info(stream, stream_success_cb, 0);
-
-  while (pa_operation_get_state(o) == PA_OPERATION_RUNNING) {
-    pa_threaded_mainloop_wait(mainloop);
-  }
-
-  pa_operation_unref(o);
-
-  const pa_timing_info* t = pa_stream_get_timing_info(stream);
-
-  if (t) {
-    buf_ready = (uint32_t)((double)44.1 * (double)(t->sink_usec / 1000));
-    buf_r_index = buf_w_index - buf_ready;
-    buf_r_index %= BUF_SIZE;
-  }
-
-  pa_threaded_mainloop_unlock(mainloop);
-
   double *signal = 0;
   fftw_complex *cpx = 0;
   fftw_plan fft;
   uint32_t i = 0;
-  uint32_t window_size;
+  uint32_t window_size = 1103; // 25ms
+  pa_usec_t play_time;
+  int neg = 0;
 
   memset(fft_buf, 0, n_samples);
-
-  // 25ms
-  window_size = 1103; //MIN(MAX(buf_ready / 40, n_samples * 2), 1200);
 
   signal = (double*) malloc(sizeof(double) * window_size);
   cpx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * window_size);
 
-  //printf("window: %6d, bufferlen: %d samples, %f seconds\n", window_size, buf_ready, (double)buf_ready/44100);
+  pa_stream_get_latency(stream, &play_time, &neg);
+
+  // Negative latency tells how many sample is in buffer waiting to play
+  if (neg) {
+    buf_ready = (uint32_t)((double)44.1 * (double)(play_time / 1000));
+    buf_r_index = buf_w_index - buf_ready;
+    buf_r_index %= BUF_SIZE;
+  }
 
   for (i = 0; i < window_size; i++) {
     if (buf_ready > 0) {
