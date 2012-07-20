@@ -19,8 +19,6 @@
 # along with PulseAudioSpectrogram.  If not, see <http://www.gnu.org/licenses/>.
 
 
-import spectrogram
-
 import math
 import cairo
 from gi.repository import Gtk, Gdk, GObject
@@ -31,17 +29,12 @@ class SpectrogramWidget(Gtk.DrawingArea):
     self.surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1024, 512)
     self.red_dB_offset = 0
     self.red_dB_max = 18
-    #self.bufLabel = Gtk.Label()
-    self.sourceLabel = Gtk.Label()
     self.press_x = -1
     self.press_y = -1
 
     self.connect("button-press-event", self.on_mouse_press_event)
     self.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
 
-    spectrogram.connect()
-
-    self.sourceLabel.set_label(spectrogram.source_name())
 
     self.set_size_request(1024 + 20, 512 + 20)
 
@@ -62,19 +55,17 @@ class SpectrogramWidget(Gtk.DrawingArea):
     self.get_window().invalidate_rect(self.get_allocation(), True)
     pass # def on_mouse_press_event
 
-  def timeout(self):
+  def timeout(self, fft_data):
     my_cr = cairo.Context(self.surface)
 
     my_cr.set_source_surface(self.surface, -1, 0)
     my_cr.rectangle(0, 0, 1024, 512)
     my_cr.fill()
 
-    self.draw_fft(my_cr, spectrogram.read())
+    self.draw_fft(my_cr, fft_data)
 
     self.get_window().invalidate_rect(self.get_allocation(), True)
     self.get_window().process_updates(True)
-
-    #self.bufLabel.set_label(str(round(float(spectrogram.buf_ready()) / float(44100), 2)))
 
     pass # def timeout
 
@@ -172,13 +163,21 @@ class SpectrogramWidget(Gtk.DrawingArea):
 
   pass # class SpectrogramWidget
 
+
+import spectrogram
+
 class PulseSpectrogram(Gtk.Window):
 
   def __init__(self):
     Gtk.Window.__init__(self, title="PulseAudioSpectrogram")
 
+    spectrogram.connect()
+
     self.running = False
     self.spec = SpectrogramWidget()
+
+    self.sourceLabel = Gtk.Label()
+    self.sourceLabel.set_label(spectrogram.source_name())
 
     self.button = Gtk.Button(label="Start")
     self.button.connect("clicked", self.on_button_clicked)
@@ -213,7 +212,7 @@ class PulseSpectrogram(Gtk.Window):
     box.add(Gtk.Label("Max dB"))
     box.add(self.scaleMax)
     box.add(self.button)
-    box.add(self.spec.sourceLabel)
+    box.add(self.sourceLabel)
 
     vbox = Gtk.VBox(spacing=6)
     vbox.pack_start(self.spec, True, True, 0)
@@ -237,7 +236,7 @@ class PulseSpectrogram(Gtk.Window):
     pass # def on_button_clicked
 
   def on_timeout(self):
-    self.spec.timeout()
+    self.spec.timeout(spectrogram.read())
     return self.running
 
   pass # class PulseSpectrogram
