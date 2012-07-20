@@ -29,7 +29,6 @@ class SpectrogramWidget(Gtk.DrawingArea):
   def __init__(self):
     Gtk.DrawingArea.__init__(self)
     self.surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, 1024, 512)
-    self.running = False
     self.red_dB_offset = 0
     self.red_dB_max = 18
     #self.bufLabel = Gtk.Label()
@@ -50,25 +49,20 @@ class SpectrogramWidget(Gtk.DrawingArea):
 
     pass # def __init__
 
-  def isRunning(self):
-     return self.running
-     pass # def running
+  def setRedDBMax(self, value):
+    self.red_dB_max = value
+    pass # def setRedDBMax
 
-  def start(self):
-    self.running = True
-    GObject.timeout_add(25, self.on_timeout)
-    pass # def start
-
-  def stop(self):
-    self.running = False
-    pass # def stop
+  def setRedDBOffset(self, value):
+    self.red_dB_offset = value
+    pass # def setRedDBOffset
 
   def on_mouse_press_event(self, widget, event):
     self.press_x, self.press_y = event.get_coords()
     self.get_window().invalidate_rect(self.get_allocation(), True)
     pass # def on_mouse_press_event
 
-  def on_timeout(self):
+  def timeout(self):
     my_cr = cairo.Context(self.surface)
 
     my_cr.set_source_surface(self.surface, -1, 0)
@@ -82,8 +76,7 @@ class SpectrogramWidget(Gtk.DrawingArea):
 
     #self.bufLabel.set_label(str(round(float(spectrogram.buf_ready()) / float(44100), 2)))
 
-    return self.running
-    pass # def on_timeout
+    pass # def timeout
 
   def on_draw(self, widget, cr):
     w = self.get_allocated_width()
@@ -184,6 +177,7 @@ class PulseSpectrogram(Gtk.Window):
   def __init__(self):
     Gtk.Window.__init__(self, title="PulseAudioSpectrogram")
 
+    self.running = False
     self.spec = SpectrogramWidget()
 
     self.button = Gtk.Button(label="Start")
@@ -195,7 +189,11 @@ class PulseSpectrogram(Gtk.Window):
     self.scaleMax.set_size_request(200, 20)
     self.scaleMax.set_adjustment(Gtk.Adjustment(20, 1, 100, 1, 10, 0))
     self.scaleMax.set_increments(0.5, 5)
-    self.scaleMax.connect("value-changed", self.on_scaleMax_value_changed)
+    self.scaleMax.connect(
+      "value-changed",
+      self.on_scale_value_changed,
+      self.spec.setRedDBMax
+    )
 
     self.scaleOffset = Gtk.HScale()
     self.scaleOffset.set_value_pos(1)#Gtk.GTK_POS_LEFT)
@@ -203,7 +201,11 @@ class PulseSpectrogram(Gtk.Window):
     self.scaleOffset.set_size_request(200, 20)
     self.scaleOffset.set_adjustment(Gtk.Adjustment(0, -80, 80, 1, 10, 1))
     self.scaleOffset.set_increments(0.5, 5)
-    self.scaleOffset.connect("value-changed", self.on_scaleOffset_value_changed)
+    self.scaleOffset.connect(
+      "value-changed",
+      self.on_scale_value_changed,
+      self.spec.setRedDBOffset
+    )
 
     box = Gtk.Box(spacing=6)
     box.add(Gtk.Label("Offset dB"))
@@ -221,20 +223,22 @@ class PulseSpectrogram(Gtk.Window):
 
     pass # def __init__
 
-  def on_scaleOffset_value_changed(self, widget):
-    self.spec.red_dB_offset = widget.get_value()
-
-  def on_scaleMax_value_changed(self, widget):
-    self.spec.red_dB_max = widget.get_value()
+  def on_scale_value_changed(self, widget, setScale):
+    setScale(widget.get_value())
 
   def on_button_clicked(self, widget):
-    if self.spec.isRunning():
+    if self.running:
       self.button.set_label("Start")
-      self.spec.stop()
+      self.running = False
     else:
       self.button.set_label("Stop")
-      self.spec.start()
+      GObject.timeout_add(25, self.on_timeout)
+      self.running = True
     pass # def on_button_clicked
+
+  def on_timeout(self):
+    self.spec.timeout()
+    return self.running
 
   pass # class PulseSpectrogram
 
