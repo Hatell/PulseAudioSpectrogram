@@ -42,13 +42,13 @@ class SpectrogramWidget(Gtk.DrawingArea):
 
     pass # def __init__
 
-  def setRedDBMax(self, value):
+  def setDBMax(self, value):
     self.red_dB_max = value
-    pass # def setRedDBMax
+    pass # def setDBMax
 
-  def setRedDBOffset(self, value):
+  def setDBOffset(self, value):
     self.red_dB_offset = value
-    pass # def setRedDBOffset
+    pass # def setDBOffset
 
   def on_mouse_press_event(self, widget, event):
     self.press_x, self.press_y = event.get_coords()
@@ -165,6 +165,7 @@ class SpectrogramWidget(Gtk.DrawingArea):
 
 
 import spectrogram
+#from FFTWidget import FFTWidget
 
 class PulseSpectrogram(Gtk.Window):
 
@@ -175,6 +176,7 @@ class PulseSpectrogram(Gtk.Window):
 
     self.running = False
     self.spec = SpectrogramWidget()
+    #self.spec = FFTWidget()
 
     self.sourceLabel = Gtk.Label()
     self.sourceLabel.set_label(spectrogram.source_name())
@@ -183,7 +185,7 @@ class PulseSpectrogram(Gtk.Window):
     self.button.connect("clicked", self.on_button_clicked)
 
     self.scaleMax = Gtk.HScale()
-    self.scaleMax.set_value_pos(1)#Gtk.GTK_POS_LEFT)
+    self.scaleMax.set_value_pos(Gtk.PositionType.LEFT)
     self.scaleMax.set_digits(0)
     self.scaleMax.set_size_request(200, 20)
     self.scaleMax.set_adjustment(Gtk.Adjustment(20, 1, 100, 1, 10, 0))
@@ -191,11 +193,11 @@ class PulseSpectrogram(Gtk.Window):
     self.scaleMax.connect(
       "value-changed",
       self.on_scale_value_changed,
-      self.spec.setRedDBMax
+      self.spec.setDBMax
     )
 
     self.scaleOffset = Gtk.HScale()
-    self.scaleOffset.set_value_pos(1)#Gtk.GTK_POS_LEFT)
+    self.scaleOffset.set_value_pos(Gtk.PositionType.LEFT)
     self.scaleOffset.set_digits(0)
     self.scaleOffset.set_size_request(200, 20)
     self.scaleOffset.set_adjustment(Gtk.Adjustment(0, -80, 80, 1, 10, 1))
@@ -203,7 +205,7 @@ class PulseSpectrogram(Gtk.Window):
     self.scaleOffset.connect(
       "value-changed",
       self.on_scale_value_changed,
-      self.spec.setRedDBOffset
+      self.spec.setDBOffset
     )
 
     box = Gtk.Box(spacing=6)
