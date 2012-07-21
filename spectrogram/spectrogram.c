@@ -49,11 +49,6 @@ static pa_context *context = 0;
 static pa_stream *stream = 0;
 static pa_proplist *proplist = 0;
 
-static pa_buffer_attr buffer_attr = {
-  .maxlength = (uint32_t) -1,
-  .fragsize = (uint32_t) 176400 * 2 // 50ms in bytes
-};
-
 static pa_sample_spec sample_spec = {
   .format = PA_SAMPLE_S16LE,
   .rate = 44100,
@@ -103,6 +98,38 @@ static void stream_state_cb(
   }
 }
 
+static void stream_update_timing_cb(
+        pa_stream *s,
+        int success,
+        void *userdata
+) {
+  pa_usec_t l, usec;
+  int negative = 0;
+
+  if (!success ||
+    pa_stream_get_time(s, &usec) < 0 ||
+    pa_stream_get_latency(s, &l, &negative) < 0) {
+    exit(-1);
+    return;
+  }
+
+  fprintf(stderr, ("Time: %0.3f sec; Latency: %0.0f usec."),
+          (float) usec / 1000000,
+          (float) l * (negative?-1.0f:1.0f));
+  fprintf(stderr, "        \r");
+
+  // Negative latency tells how many sample is in buffer waiting to play
+  if (negative) {
+    // FIXME why latency is about 450ms greater?
+    buf_ready = (uint32_t)44.1 * l / 1000 - 44.1 * 450;
+    buf_r_index = buf_w_index - buf_ready;
+    buf_r_index %= BUF_SIZE;
+  }
+
+  pa_threaded_mainloop_signal(mainloop, 0);
+}
+
+
 static void stream_read_cb(
         pa_stream *s,
         size_t length,
@@ -121,6 +148,7 @@ static void stream_read_cb(
   signal = (int16_t*)data;
 
   /* Length is in bytes, one sample is 2 bytes and data contains 2 channels */
+  // FIXME use sample_spec here
   for (i = 0; i < peeked / 4; i++) {
     // FIXME what if buffer is full?
     buf[buf_w_index] = signal[i*2] / 2 + signal[i*2 + 1] / 2;
@@ -258,8 +286,12 @@ int pulse_connect()
 
   pa_operation_unref(o);
 
-  if (pa_stream_connect_record(stream, source_name, &buffer_attr,
-      PA_STREAM_AUTO_TIMING_UPDATE | PA_STREAM_INTERPOLATE_TIMING)) {
+  if (pa_stream_connect_record(
+    stream,
+    source_name,
+    0,
+    PA_STREAM_NOFLAGS
+  )) {
     quit("pa_stream_connect_record");
     return -6;
   }
@@ -283,22 +315,27 @@ double *pulse_read()
   fftw_plan fft;
   uint32_t i = 0;
   uint32_t window_size = 1103; // 25ms
-  pa_usec_t play_time;
-  int neg = 0;
 
   memset(fft_buf, 0, n_samples);
 
   signal = (double*) malloc(sizeof(double) * window_size);
   cpx = (fftw_complex*) fftw_malloc(sizeof(fftw_complex) * window_size);
 
-  pa_stream_get_latency(stream, &play_time, &neg);
+  pa_threaded_mainloop_lock(mainloop);
 
-  // Negative latency tells how many sample is in buffer waiting to play
-  if (neg) {
-    buf_ready = (uint32_t)((double)44.1 * (double)(play_time / 1000));
-    buf_r_index = buf_w_index - buf_ready;
-    buf_r_index %= BUF_SIZE;
+  pa_operation *o = pa_stream_update_timing_info(
+    stream,
+    stream_update_timing_cb,
+    0
+  );
+
+  while (pa_operation_get_state(o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait(mainloop);
   }
+
+  pa_operation_unref(o);
+
+  pa_threaded_mainloop_unlock(mainloop);
 
   for (i = 0; i < window_size; i++) {
     if (buf_ready > 0) {
